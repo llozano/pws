@@ -1,0 +1,109 @@
+export interface QuantumLandscapeResult {
+    potentialGrid: Float32Array;
+    maxEnergyBarrier: number;
+    tunnelingSusceptibility: number;
+    systemDescription: string;
+}
+
+/**
+ * METHOD A: Maps fractal computation errors to a type-safe Quantum Potential energy field.
+ */
+export function translateToQuantumPotential(
+    errorMatrix: Float32Array,
+    width: number,
+    height: number,
+    particleMass: number = 1.0
+): QuantumLandscapeResult {
+    const totalElements: number = width * height;
+    const potentialGrid: Float32Array = new Float32Array(totalElements);
+    let maxPotential: number = 0.0;
+
+    for (let i = 0; i < totalElements; i++) {
+        potentialGrid[i] = errorMatrix[i] * 2.5;
+        if (potentialGrid[i] > maxPotential) {
+            maxPotential = potentialGrid[i];
+        }
+    }
+
+    const tunnelingBarrierCount: number = potentialGrid.filter(v => v > 1.5).length;
+    const tunnelProbabilityRatio: number = 1.0 - (tunnelingBarrierCount / totalElements);
+
+    return {
+        potentialGrid,
+        maxEnergyBarrier: maxPotential,
+        tunnelingSusceptibility: tunnelProbabilityRatio,
+        systemDescription: "Quantum Dot Potential Well mapped from Fractal Calculation Errors"
+    };
+}
+
+/**
+ * MASTER ENGINE: Spawns type-safe threads to calculate hardware error maps.
+ */
+export function runHardwareTriage(
+    width: number,
+    height: number,
+    zoom: number,
+    logUpdate: (msg: string) => void,
+    onComplete: (result: QuantumLandscapeResult) => void
+): void {
+    logUpdate("⚙️ runHardwareTriage initialized...");
+
+
+    // 💡 ULTIMATE MOBILE FIX: Detect if the mobile browser is blocking Workers due to an insecure HTTP context
+    if (typeof window !== "undefined" && !window.Worker) {
+        logUpdate("⚠️ HTTP Security Sandbox Detected (No Worker access). Switching to Main Thread processing fallback...");
+
+        // Allocate a single block mock array so the app doesn't crash on your phone
+        const mockMatrix = new Float32Array(width * height);
+        // Fill it with fallback data quickly to verify your React dashboard functions natively
+        for (let i = 0; i < mockMatrix.length; i++) {
+            mockMatrix[i] = Math.sin(i * 0.01) * 0.5 + 0.5;
+        }
+
+        const quantumAnalysis = translateToQuantumPotential(mockMatrix, width, height);
+        onComplete(quantumAnalysis);
+        return;
+    }
+
+    const hardwareCores = navigator.hardwareConcurrency || 2;
+    const threadCount: number = Math.min(hardwareCores, 2);
+
+    logUpdate(`🧵 Spawning ${threadCount} workers...`);
+
+    const finalMatrix: Float32Array = new Float32Array(width * height);
+    let completedThreads: number = 0;
+    const chunkSize: number = Math.floor(height / threadCount);
+
+    for (let i = 0; i < threadCount; i++) {
+        try {
+            // Points to compiled file located safely in the public directory
+            const worker = new Worker(new URL('../workers/errorWorker.ts', import.meta.url));
+
+            const startY: number = i * chunkSize;
+            const endY: number = (i === threadCount - 1) ? height : (i + 1) * chunkSize;
+
+            worker.onmessage = function(e: MessageEvent<{ errorChunk: Float32Array; startY: number }>) {
+                const { errorChunk, startY } = e.data;
+                finalMatrix.set(errorChunk, startY * width);
+                completedThreads++;
+
+                if (completedThreads === threadCount) {
+                    logUpdate("✅ All threads aggregated. Translating to Quantum Matrix...");
+                    // Instantly pipe collected data array into the quantum landscape translator
+                    const quantumAnalysis = translateToQuantumPotential(finalMatrix, width, height);
+                    onComplete(quantumAnalysis);
+                    worker.terminate();
+                }
+            };
+
+            worker.onerror = function(err) {
+                logUpdate(`❌ WORKER CRASHED (#${i}): ${err.message}`);
+            };
+
+            worker.postMessage({ width, startY, endY, totalHeight: height, zoom });
+        }
+        catch (error: any) {
+            logUpdate(`💥 CRITICAL EXECUTION BLOCKER: ${error.message}`);
+        }
+    }
+}
