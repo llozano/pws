@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { runHardwareTriage, generateHardwareHash,
+import { runHardwareTriage, generateHardwareHash256,
   analyzeMatrixVariance, type QuantumLandscapeResult, type MatrixVarianceAnalysis } from "@/utils/quantumDiagnostics";
 
 export default function DiagnosticsDashboard() {
@@ -40,10 +40,10 @@ export default function DiagnosticsDashboard() {
     const zoom = 0.05; // Target a deep zoom section
 
     // Fire off the background threads
-    runHardwareTriage(width, height, zoom, (msg) => addLog(msg), (quantumData: QuantumLandscapeResult) => {
+    runHardwareTriage(width, height, zoom, (msg) => addLog(msg), async (quantumData: QuantumLandscapeResult) => {
       setResult(quantumData);
 
-      const hash = generateHardwareHash(quantumData.potentialGrid);
+      const hash = await generateHardwareHash256(quantumData.potentialGrid);
       const stats = analyzeMatrixVariance(quantumData.potentialGrid);
 
       setHwHash(hash);
@@ -139,7 +139,7 @@ const styles: Record<string, React.CSSProperties> = {
   resultsArea: { marginTop: "15px" },
   card: { backgroundColor: "#111", border: "1px solid #222", padding: "15px", borderRadius: "4px" },
   cardTitle: { color: "#00ff88", margin: "0 0 10px 0", fontSize: "1rem" },
-  hashBadge: { backgroundColor: "#1f142e", border: "1px solid #7928ca", padding: "10px", borderRadius: "4px", fontSize: "0.9rem", color: "#fff" },
+  hashBadge: { backgroundColor: "#1f142e", border: "1px solid #7928ca", padding: "10px", borderRadius: "4px", fontSize: "0.9rem", color: "#fff", overflowX: "auto", whiteSpace: "nowrap", display: "flex", gap: "8px", alignItems: "center", WebkitOverflowScrolling: "touch" },
   metricGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginTop: "15px", marginBottom: "15px" },
   metricBox: { backgroundColor: "#161616", border: "1px solid #222", padding: "10px", borderRadius: "4px", display: "flex", flexDirection: "column" },
   metricLabel: { fontSize: "0.7rem", color: "#888", marginBottom: "3px" },
