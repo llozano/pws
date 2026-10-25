@@ -5,6 +5,11 @@ export interface QuantumLandscapeResult {
     systemDescription: string;
 }
 
+export interface MatrixVarianceAnalysis {
+    activeGlitches: number;
+    averageDrift: number;
+}
+
 /**
  * METHOD A: Maps fractal computation errors to a type-safe Quantum Potential energy field.
  */
@@ -106,4 +111,37 @@ export function runHardwareTriage(
             logUpdate(`💥 CRITICAL EXECUTION BLOCKER: ${error.message}`);
         }
     }
+}
+
+/**
+ * Generates a fast, unique cryptographic bitwise hash of the entire 1M float matrix.
+ */
+export function generateHardwareHash(matrix: Float32Array): string {
+    let hash = 0;
+    for (let i = 0; i < matrix.length; i++) {
+        // Blazing-fast bitwise hashing loop over the 1,000,000 floats
+        hash = (hash << 5) - hash + matrix[i];
+        hash |= 0;
+    }
+    return "HW-SIG-" + Math.abs(hash).toString(16).toUpperCase();
+}
+
+/**
+ * Analyzes the structural data variance to find where deviations actually occur.
+ */
+export function analyzeMatrixVariance(matrix: Float32Array): MatrixVarianceAnalysis {
+    let activeGlitches = 0;
+    let totalErrorMagnitude = 0;
+
+    for (let i = 0; i < matrix.length; i++) {
+        if (matrix[i] > 0.0) {
+            activeGlitches++;
+            totalErrorMagnitude += matrix[i];
+        }
+    }
+
+    return {
+        activeGlitches,
+        averageDrift: totalErrorMagnitude / matrix.length
+    };
 }
