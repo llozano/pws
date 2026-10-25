@@ -4,7 +4,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 Device fingerprinting via GPU errors detection.
 
-**The Potential Well Strategy** maps the raw, un-normalized magnitude of calculation errors directly to a spatial coordinate system. 
+**The Potential Well Strategy** maps the raw, un-normalized magnitude of calculation errors directly to a spatial coordinate system.
 This preserves the absolute severity of the precision drift, which directly correlates to physical hardware states:
 
 - Isolating Thermal Overclocking Pitfalls: When a specific cluster of GPU execution units overheats, its internal transistors experience leakage currents. Method A captures this as a sudden, massive spatial energy barrier spike at that exact coordinate grid.
