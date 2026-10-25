@@ -127,6 +127,28 @@ export function generateHardwareHash(matrix: Float32Array): string {
 }
 
 /**
+ * 256-Bit Hardware Digest Engine
+ * Converts the 1M float array straight into a unique 64-character token.
+ */
+export async function generateHardwareHash256(matrix: Float32Array): Promise<string> {
+    // 💡 THE ULTIMATE OVERRIDE: Pass the native Float32Array matrix directly.
+    // Cast it explicitly 'as BufferSource' to force the linter to clear the assertion path.
+    const targetSource = matrix as BufferSource;
+
+    // Execute the crypto digest natively
+    const hashBuffer = await crypto.subtle.digest("SHA-256", targetSource);
+    const hashArray = new Uint8Array(hashBuffer);
+
+    // Convert the raw binary array into an ultra-long hexadecimal string block
+    const hexString = Array.from(hashArray)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase();
+
+    return `HW-LONGID-${hexString}`;
+}
+
+/**
  * Analyzes the structural data variance to find where deviations actually occur.
  */
 export function analyzeMatrixVariance(matrix: Float32Array): MatrixVarianceAnalysis {
