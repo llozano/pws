@@ -6,7 +6,8 @@ import { collectAudioSignals } from './probes/audio';
 import { buildFingerprint } from './aggregate';
 
 export interface FullFingerprint {
-  id: string;
+  id: string; // Browser Fingerprint
+  hardwareId: string; // Cross-Browser Hardware ID
   canonical: string;
 }
 

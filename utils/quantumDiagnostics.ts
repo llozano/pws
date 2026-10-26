@@ -7,7 +7,8 @@ export interface QuantumLandscapeResult {
   tunnelingSusceptibility: number;
   systemDescription: string;
 
-  fingerprintId?: string;
+  fingerprintId?: string; // Browser ID
+  crossBrowserHardwareId?: string; // Pure Silicon Hardware ID
   fingerprintCanonical?: string;
   features?: GridFeatures;
 }
@@ -187,6 +188,7 @@ async function finaliseWithFingerprint(
     onComplete({
       ...quantumAnalysis,
       fingerprintId: fingerprint.id,
+      crossBrowserHardwareId: fingerprint.hardwareId,
       fingerprintCanonical: fingerprint.canonical,
       // features are attached inside computeDeviceFingerprint;
       // expose them here for the dashboard if desired.

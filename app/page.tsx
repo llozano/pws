@@ -70,6 +70,9 @@ export default function DiagnosticsDashboard() {
         addLog(
           `🏁 Pipeline complete. Unique Signature locked: ${quantumData.fingerprintId ?? 'hash'}`,
         );
+        addLog(
+          `🏁 Unique Hardware Signature locked: ${quantumData.crossBrowserHardwareId ?? 'hash'}`,
+        );
       },
       audioAllowed,
     );
@@ -100,10 +103,20 @@ export default function DiagnosticsDashboard() {
       {result?.fingerprintId && (
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Composite Fingerprint</h3>
-          <div style={styles.hashBadge}>{result?.fingerprintId}</div>
-          <p style={styles.cardText}>
-            SHA-256 of GPU error features, WebGL/WebGPU limits, canvas & audio signals
-          </p>
+
+          <div style={{ marginBottom: '10px' }}>
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>BROWSER-SCOPED ID:</span>
+            <div style={styles.hashBadge}>{result?.fingerprintId}</div>
+          </div>
+
+          <div>
+            <span style={{ fontSize: '0.75rem', color: '#00ff88' }}>
+              CROSS-BROWSER HARDWARE ID (SILICON):
+            </span>
+            <div style={{ ...styles.hashBadge, borderColor: '#00ff88' }}>
+              {result?.crossBrowserHardwareId}
+            </div>
+          </div>
         </div>
       )}
 
