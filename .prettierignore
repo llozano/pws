@@ -1,0 +1,9 @@
+node_modules
+.next
+.idea
+.github
+out
+build
+coverage
+public
+*.lock

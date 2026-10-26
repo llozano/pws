@@ -6,9 +6,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "rm -rf out && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "next lint",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check"
   },
   "dependencies": {
     "next": "16.4.3",
@@ -16,12 +18,16 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@webgpu/types": "^0.1.74",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
