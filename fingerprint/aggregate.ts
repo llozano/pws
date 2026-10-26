@@ -59,7 +59,7 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
         limits: inputs.webgpu.adapter.limits,
       },
       matrixHash: inputs.webgpu.matrixHash,
-      atomicScaling: inputs.webgpu.atomicScaling.map((v) => round(v, 2)),
+      // atomicScaling: inputs.webgpu.atomicScaling.map((v) => round(v / (inputs.webgpu?.atomicScaling[0] || 1), 2)),
     },
     canvas: inputs.canvasHash,
     audio: inputs.audioHash,

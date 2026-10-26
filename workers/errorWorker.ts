@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import type { WorkerInbound, WorkerOutbound, TileRequest } from './messages';
+import type { WorkerInbound, WorkerOutbound } from './messages';
 
 declare const self: DedicatedWorkerGlobalScope;
 

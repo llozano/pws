@@ -1,5 +1,5 @@
-import { computeDeviceFingerprint } from '../fingerprint';
-import type { GridFeatures } from '../fingerprint/features';
+import { computeDeviceFingerprint } from '@/fingerprint';
+import type { GridFeatures } from '@/fingerprint/features';
 
 export interface QuantumLandscapeResult {
   potentialGrid: Float32Array;
@@ -105,11 +105,13 @@ export function runHardwareTriage(
       const startY: number = i * chunkSize;
       const endY: number = i === threadCount - 1 ? height : (i + 1) * chunkSize;
 
-      worker.onmessage = function (e: MessageEvent<{ type: string, jobId: number, errorChunk: Float32Array; startY: number }>) {
+      worker.onmessage = async (
+        e: MessageEvent<{ type: string; jobId: number; errorChunk: Float32Array; startY: number }>,
+      ) => {
         const { errorChunk, startY } = e.data;
         const msg = e.data;
 
-        if (msg.type === 'pws:tile-response') {
+        if (msg.type !== 'pws:tile-response') {
           return;
         }
         if (msg.jobId !== jobId) {
@@ -124,7 +126,7 @@ export function runHardwareTriage(
           // Instantly pipe collected data array into the quantum landscape translator
           const quantumAnalysis = translateToQuantumPotential(finalMatrix, width, height);
           // onComplete(quantumAnalysis);
-          void finaliseWithFingerprint(
+          await finaliseWithFingerprint(
             quantumAnalysis,
             width,
             height,
@@ -140,7 +142,15 @@ export function runHardwareTriage(
         logUpdate(`❌ WORKER CRASHED (#${i}): ${err.message}`);
       };
 
-      worker.postMessage({ type: 'pws:title-request', jobId, width, startY, endY, totalHeight: height, zoom });
+      worker.postMessage({
+        type: 'pws:tile-request',
+        jobId,
+        width,
+        startY,
+        endY,
+        totalHeight: height,
+        zoom,
+      });
     } catch (error: any) {
       logUpdate(`💥 CRITICAL EXECUTION BLOCKER: ${error.message}`);
     }
