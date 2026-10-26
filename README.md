@@ -11,6 +11,8 @@ Device Fingerprinting via GPU & Hardware Error Detection
 - Multi-Probe Composite Profiling: Beyond the quantum error grid, the engine combines high-precision WebGL shader probes, WebGPU matrix execution hashes, canvas rasterization artifacts, and audio synthesis signatures.
 - True Hardware Differentiation: Because it retains absolute error features alongside microarchitectural limits and extension profiles, the resulting SHA-256 fingerprint distinguishes between enterprise-grade accelerators, consumer GPUs, and mobile architectures with high fidelity.
 
+[Demo](https://llozano.github.io/pws/)
+
 ## Getting Started
 
 First, run the development server:
