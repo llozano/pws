@@ -1,7 +1,10 @@
 import { fnv1a } from '../hash';
 
 export async function collectAudioSignals(): Promise<string> {
-  const Ctx = (window as any).OfflineAudioContext ?? (window as any).webkitOfflineAudioContext;
+  const audioWindow = window as typeof window & {
+    webkitOfflineAudioContext?: typeof OfflineAudioContext;
+  };
+  const Ctx = window.OfflineAudioContext ?? audioWindow.webkitOfflineAudioContext;
   if (!Ctx) return '';
   const ctx: OfflineAudioContext = new Ctx(1, 44100, 44100);
   const osc = ctx.createOscillator();

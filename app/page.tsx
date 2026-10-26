@@ -1,130 +1,188 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { MANDELBROT_PROBE } from '@/fingerprint/fractalConfig';
 import {
-  runHardwareTriage,
-  generateHardwareHash256,
+  generateGridHash,
+  runDeviceProfileProbe,
+  generateGridHash256,
   analyzeMatrixVariance,
+  type DeviceProfileProbeController,
   type QuantumLandscapeResult,
   type MatrixVarianceAnalysis,
 } from '@/utils/quantumDiagnostics';
 
-export default function DiagnosticsDashboard() {
-  const [status, setStatus] = useState<'idle' | 'running' | 'complete'>('idle');
-  const [result, setResult] = useState<QuantumLandscapeResult | null>(null);
-  const [threadCount, setThreadCount] = useState<number>(4);
-  const [logs, setLogs] = useState<string[]>([]); // 💡 Mobile Screen Logger
-  const [hwHash, setHwHash] = useState<string>('');
-  const [variance, setVariance] = useState<MatrixVarianceAnalysis | null>(null);
+const DEFAULT_PROBE_SETTINGS = {
+  width: 1024,
+  height: 1024,
+  zoom: MANDELBROT_PROBE.defaultZoom,
+  audioAllowed: true,
+} as const;
 
+/** Renders the probe controls, progress log, identifiers, and stability measurements. */
+export default function DiagnosticsDashboard() {
+  const [status, setStatus] = useState<'idle' | 'running' | 'complete' | 'error' | 'cancelled'>(
+    'idle',
+  );
+  const [result, setResult] = useState<QuantumLandscapeResult | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [resultHash, setResultHash] = useState<string>('');
+  const [variance, setVariance] = useState<MatrixVarianceAnalysis | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [gpuStabilityEnabled, setGpuStabilityEnabled] = useState(false);
+  const controllerRef = useRef<DeviceProfileProbeController | null>(null);
+  const runSequenceRef = useRef(0);
+
+  // Adds a timestamped message to the visible execution log.
   const addLog = (msg: string) => {
     setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
   useEffect(() => {
-    // Detect core count safely in the browser context
-    if (typeof window !== 'undefined' && navigator.hardwareConcurrency) {
-      setThreadCount(navigator.hardwareConcurrency);
-    }
+    const controller = controllerRef;
+    const runSequence = runSequenceRef;
+    return () => {
+      runSequence.current++;
+      controller.current?.cancel();
+    };
   }, []);
 
-  const handleStartTriage = () => {
+  // Starts a fresh probe and ignores callbacks from any previous run.
+  const handleStartProbe = () => {
+    controllerRef.current?.cancel();
+    const runSequence = ++runSequenceRef.current;
+
     setStatus('running');
     setResult(null);
-    setHwHash('');
+    setResultHash('');
     setVariance(null);
+    setErrorMessage('');
     setLogs([]);
 
-    addLog('🔴 Click Event Triggered successfully!');
+    addLog('Device-profile probe started.');
 
-    // Grid Dimensions: 1024x1024 data points
-    const width = 1024;
-    const height = 1024;
-    const zoom = 0.05; // Target a deep zoom section
-
-    const audioAllowed = true;
-
-    // Fire off the background threads
-    runHardwareTriage(
-      width,
-      height,
-      zoom,
-      (msg) => addLog(msg),
-      async (quantumData: QuantumLandscapeResult) => {
+    controllerRef.current = runDeviceProfileProbe({
+      ...DEFAULT_PROBE_SETTINGS,
+      logUpdate: addLog,
+      onComplete: async (quantumData: QuantumLandscapeResult) => {
+        if (runSequence !== runSequenceRef.current) return;
+        controllerRef.current = null;
         setResult(quantumData);
 
-        if (quantumData.fingerprintId) {
-          setHwHash(quantumData.fingerprintId);
-          addLog(`Composite fingerprint: ${quantumData.fingerprintId.slice(0, 16)}...`);
+        if (quantumData.browserProfileId) {
+          setResultHash(quantumData.browserProfileId);
+          addLog(`Browser profile: ${quantumData.browserProfileId.slice(0, 16)}...`);
         } else {
-          const hash = await generateHardwareHash256(quantumData.potentialGrid);
-          setHwHash(hash);
-          addLog(`Falling back to hash: ${hash}...`);
+          let hash: string;
+          try {
+            hash = await generateGridHash256(quantumData.potentialGrid);
+          } catch {
+            hash = generateGridHash(quantumData.potentialGrid);
+          }
+          setResultHash(hash);
+          addLog(`Using a grid-only fallback hash: ${hash.slice(0, 24)}...`);
         }
 
         const stats = analyzeMatrixVariance(quantumData.potentialGrid);
-
         setVariance(stats);
-
         setStatus('complete');
-        addLog(
-          `🏁 Pipeline complete. Unique Signature locked: ${quantumData.fingerprintId ?? 'hash'}`,
-        );
-        addLog(
-          `🏁 Unique Hardware Signature locked: ${quantumData.crossBrowserHardwareId ?? 'hash'}`,
-        );
+        addLog('Device-profile probe complete.');
       },
-      audioAllowed,
-    );
+      onError: (error) => {
+        if (runSequence !== runSequenceRef.current) return;
+        controllerRef.current = null;
+        setErrorMessage(error.message);
+        setStatus('error');
+      },
+      gpuStabilityEnabled,
+    });
+  };
+
+  // Cancels the active run and invalidates any callbacks already in flight.
+  const handleCancel = () => {
+    runSequenceRef.current++;
+    controllerRef.current?.cancel();
+    controllerRef.current = null;
+    setStatus('cancelled');
+    addLog('Probe cancelled.');
   };
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>💻 Hardware Quantum Diagnostics Engine</h1>
+        <h1 style={styles.title}>Device Profile Probe</h1>
       </header>
 
       <div style={styles.controlPanel}>
+        <label style={styles.optionRow}>
+          <input
+            type="checkbox"
+            checked={gpuStabilityEnabled}
+            disabled={status === 'running'}
+            onChange={(event) => setGpuStabilityEnabled(event.target.checked)}
+          />
+          <span>
+            Run optional GPU load and recovery test
+            <small style={styles.optionHelp}> Uses a bounded WebGPU workload when available.</small>
+          </span>
+        </label>
+
         <button
-          onClick={handleStartTriage}
-          onTouchStart={handleStartTriage}
-          disabled={status === 'running'}
+          onClick={status === 'running' ? handleCancel : handleStartProbe}
           style={{
             ...styles.btnActive,
+            backgroundColor: status === 'running' ? '#a61b1b' : styles.btnActive.backgroundColor,
             cursor: 'pointer',
-            touchAction: 'manipulation', // Prevent double-tap zoom delay on iOS
-            WebkitTapHighlightColor: 'rgba(0,0,0,0)', // Removes the default blue block flash on iOS Safari
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'rgba(0,0,0,0)',
           }}
         >
-          {status === 'running' ? '🧬 Harvesting Hardware Errors...' : '🚀 Launch Triage'}
+          {status === 'running' ? 'Cancel Probe' : 'Run Device Profile'}
         </button>
       </div>
 
-      {result?.fingerprintId && (
-        <div style={styles.card}>
-          <h3 style={styles.cardTitle}>Composite Fingerprint</h3>
-
-          <div style={{ marginBottom: '10px' }}>
-            <span style={{ fontSize: '0.75rem', color: '#888' }}>BROWSER-SCOPED ID:</span>
-            <div style={styles.hashBadge}>{result?.fingerprintId}</div>
-          </div>
-
-          <div>
-            <span style={{ fontSize: '0.75rem', color: '#00ff88' }}>
-              CROSS-BROWSER HARDWARE ID (SILICON):
-            </span>
-            <div style={{ ...styles.hashBadge, borderColor: '#00ff88' }}>
-              {result?.crossBrowserHardwareId}
-            </div>
-          </div>
+      {status === 'error' && (
+        <div style={styles.errorCard} role="alert">
+          <strong>Probe failed:</strong> {errorMessage}
         </div>
       )}
 
-      <section style={styles.terminalContainer}>
-        <h3 style={styles.terminalTitle}>🛰️ Real-Time Execution Telemetry</h3>
-        <div style={styles.terminalBox}>
+      {result?.browserProfileId && (
+        <div style={styles.card}>
+          <h3 style={styles.cardTitle}>Profile Identifiers</h3>
+
+          <div style={{ marginBottom: '10px' }}>
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>BROWSER PROFILE ID:</span>
+            <div style={styles.hashBadge}>{result.browserProfileId}</div>
+          </div>
+
+          {result.deviceClusterId ? (
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#00ff88' }}>
+                SERVER DEVICE CLUSTER ID:
+              </span>
+              <div style={{ ...styles.hashBadge, borderColor: '#00ff88' }}>
+                {result.deviceClusterId}
+              </div>
+              <p style={styles.matchSummary}>
+                {result.matchedExistingDevice ? 'Existing cluster match' : 'New cluster'} ·{' '}
+                {((result.deviceMatchConfidence ?? 0) * 100).toFixed(1)}% confidence ·{' '}
+                {((result.deviceMatchEvidence ?? 0) * 100).toFixed(1)}% evidence coverage
+              </p>
+            </div>
+          ) : (
+            <p style={styles.matcherWarning}>
+              Device matcher unavailable: {result.deviceMatchError || 'unknown error'}
+            </p>
+          )}
+        </div>
+      )}
+
+      <section style={styles.terminalContainer} aria-live="polite">
+        <h3 style={styles.terminalTitle}>Execution Log</h3>
+        <div style={styles.terminalBox} role="log">
           {logs.length === 0 ? (
-            <span style={{ color: '#444' }}>Terminal awaiting execution broadcast...</span>
+            <span style={{ color: '#444' }}>Ready to run.</span>
           ) : (
             logs.map((log, index) => (
               <div key={index} style={styles.logLine}>
@@ -138,11 +196,10 @@ export default function DiagnosticsDashboard() {
       <main style={styles.resultsArea}>
         {status === 'complete' && result && variance && (
           <div style={styles.card}>
-            <h2 style={styles.cardTitle}>📊 QuantumLandscapeResult</h2>
+            <h2 style={styles.cardTitle}>Synthetic Probe Result</h2>
 
-            {/* 💡 PRINT UNIQUE HARDWARE CODE DIRECTLY TO SCREEN */}
             <div style={styles.hashBadge}>
-              <strong>HARDWARE ID:</strong> <span style={{ color: '#00ffff' }}>{hwHash}</span>
+              <strong>RESULT ID:</strong> <span style={{ color: '#00ffff' }}>{resultHash}</span>
             </div>
 
             <p style={{ marginTop: '15px' }}>
@@ -151,20 +208,72 @@ export default function DiagnosticsDashboard() {
 
             <div style={styles.metricGrid}>
               <div style={styles.metricBox}>
-                <span style={styles.metricLabel}>Max Energy Barrier (eV)</span>
+                <span style={styles.metricLabel}>Fractal Backend</span>
+                <span style={styles.metricValue}>{result.fractalBackend ?? 'unknown'}</span>
+              </div>
+              <div style={styles.metricBox}>
+                <span style={styles.metricLabel}>Fractal Duration</span>
+                <span style={styles.metricValue}>
+                  {result.fractalDurationMs?.toFixed(1) ?? '0.0'} ms
+                </span>
+              </div>
+              <div style={styles.metricBox}>
+                <span style={styles.metricLabel}>Maximum Synthetic Delta</span>
                 <span style={styles.metricValue}>{result.maxEnergyBarrier.toFixed(4)}</span>
               </div>
               <div style={styles.metricBox}>
-                <span style={styles.metricLabel}>Active Glitched Nodes</span>
+                <span style={styles.metricLabel}>Non-Zero Grid Nodes</span>
                 <span style={styles.metricValue}>{variance.activeGlitches.toLocaleString()}</span>
               </div>
               <div style={styles.metricBox}>
-                <span style={styles.metricLabel}>Average Precision Drift</span>
+                <span style={styles.metricLabel}>Average Synthetic Delta</span>
                 <span style={styles.metricValue}>{variance.averageDrift.toExponential(4)}</span>
               </div>
+              {variance.invalidValues > 0 && (
+                <div style={styles.metricBox}>
+                  <span style={styles.metricLabel}>Invalid Grid Values</span>
+                  <span style={styles.metricValue}>{variance.invalidValues.toLocaleString()}</span>
+                </div>
+              )}
             </div>
 
-            <h3 style={styles.sectionTitle}>💾 Raw Sample Stream (First 15 Data Wells)</h3>
+            {result.gpuStability && (
+              <>
+                <h3 style={styles.sectionTitle}>Experimental GPU Stability</h3>
+                <p style={styles.stabilityNotice}>
+                  Numerical changes may come from browser, driver, power, temperature, or system
+                  load. They do not prove hardware failure and are not used for device matching.
+                </p>
+                <div style={styles.metricGrid}>
+                  <div style={styles.metricBox}>
+                    <span style={styles.metricLabel}>Cold Changed Pixels</span>
+                    <span style={styles.metricValue}>
+                      {(result.gpuStability.baseline.changedPixelRatio * 100).toFixed(3)}%
+                    </span>
+                  </div>
+                  <div style={styles.metricBox}>
+                    <span style={styles.metricLabel}>Loaded Changed Pixels</span>
+                    <span style={styles.metricValue}>
+                      {(result.gpuStability.loaded.changedPixelRatio * 100).toFixed(3)}%
+                    </span>
+                  </div>
+                  <div style={styles.metricBox}>
+                    <span style={styles.metricLabel}>Recovered Changed Pixels</span>
+                    <span style={styles.metricValue}>
+                      {(result.gpuStability.recovered.changedPixelRatio * 100).toFixed(3)}%
+                    </span>
+                  </div>
+                  <div style={styles.metricBox}>
+                    <span style={styles.metricLabel}>Stress Workload</span>
+                    <span style={styles.metricValue}>
+                      {result.gpuStability.stressPasses} passes
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <h3 style={styles.sectionTitle}>First 15 Grid Values</h3>
             <pre style={styles.codeBlock}>
               {JSON.stringify(Array.from(result.potentialGrid.slice(0, 15)), null, 2)}
             </pre>
@@ -188,7 +297,19 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: { borderBottom: '1px solid #222', paddingBottom: '10px', marginBottom: '15px' },
   title: { fontSize: '1.2rem', color: '#fff', margin: 0 },
-  controlPanel: { marginBottom: '15px' },
+  controlPanel: { marginBottom: '15px', display: 'grid', gap: '10px' },
+  optionRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '8px',
+    color: '#ccc',
+    fontSize: '0.8rem',
+  },
+  optionHelp: {
+    display: 'block',
+    color: '#777',
+    marginTop: '2px',
+  },
   btnActive: {
     width: '100%',
     backgroundColor: '#0070f3',
@@ -199,6 +320,30 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '1rem',
     fontWeight: 'bold',
     touchAction: 'manipulation',
+  },
+  errorCard: {
+    marginBottom: '15px',
+    padding: '12px',
+    border: '1px solid #a61b1b',
+    borderRadius: '4px',
+    backgroundColor: '#2b0d0d',
+    color: '#ffb4b4',
+  },
+  matchSummary: {
+    color: '#8ca99c',
+    fontSize: '0.75rem',
+    margin: '8px 0 0',
+  },
+  matcherWarning: {
+    color: '#ffb347',
+    fontSize: '0.8rem',
+    margin: 0,
+  },
+  stabilityNotice: {
+    color: '#aaa',
+    fontSize: '0.75rem',
+    lineHeight: '1.4',
+    margin: '0 0 10px',
   },
   terminalContainer: { marginBottom: '20px' },
   terminalTitle: { fontSize: '0.85rem', color: '#888', marginBottom: '5px' },

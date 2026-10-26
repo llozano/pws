@@ -1,31 +1,56 @@
 import { computeDeviceFingerprint } from '@/fingerprint';
+import { registerDeviceObservation } from '@/fingerprint/matchClient';
 import type { GridFeatures } from '@/fingerprint/features';
+import { runGpuFractalProbe, type GpuFractalStability } from '@/fingerprint/probes/fractalGpu';
+import type { WorkerOutbound } from '@/workers/messages';
+
+export type FractalBackend = 'webgpu' | 'cpu-worker' | 'cpu-main';
 
 export interface QuantumLandscapeResult {
   potentialGrid: Float32Array;
   maxEnergyBarrier: number;
   tunnelingSusceptibility: number;
   systemDescription: string;
+  fractalBackend?: FractalBackend;
+  fractalDurationMs?: number;
+  gpuStability?: GpuFractalStability;
 
-  fingerprintId?: string; // Browser ID
-  crossBrowserHardwareId?: string; // Pure Silicon Hardware ID
-  fingerprintCanonical?: string;
+  browserProfileId?: string;
+  browserProfileCanonical?: string;
+  deviceClusterId?: string;
+  deviceMatchConfidence?: number;
+  deviceMatchEvidence?: number;
+  matchedExistingDevice?: boolean;
+  deviceMatchError?: string;
   features?: GridFeatures;
 }
 
 export interface MatrixVarianceAnalysis {
   activeGlitches: number;
   averageDrift: number;
+  invalidValues: number;
 }
 
-/**
- * METHOD A: Maps fractal computation errors to a type-safe Quantum Potential energy field.
- */
+export interface DeviceProfileProbeController {
+  cancel(): void;
+}
+
+export interface DeviceProfileProbeOptions {
+  width: number;
+  height: number;
+  zoom: number;
+  logUpdate: (message: string) => void;
+  onComplete: (result: QuantumLandscapeResult) => void;
+  audioAllowed?: boolean;
+  onError?: (error: Error) => void;
+  gpuStabilityEnabled?: boolean;
+}
+
+/** Converts accumulated Mandelbrot differences into the grid displayed by the UI. */
 export function translateToQuantumPotential(
   errorMatrix: Float32Array,
   width: number,
   height: number,
-  particleMass: number = 1.0,
 ): QuantumLandscapeResult {
   const totalElements: number = width * height;
   const potentialGrid: Float32Array = new Float32Array(totalElements);
@@ -45,136 +70,232 @@ export function translateToQuantumPotential(
     potentialGrid,
     maxEnergyBarrier: maxPotential,
     tunnelingSusceptibility: tunnelProbabilityRatio,
-    systemDescription: 'Quantum Dot Potential Well mapped from Fractal Calculation Errors',
+    systemDescription: 'Synthetic potential landscape derived from controlled rounding differences',
   };
 }
 
-/**
- * MASTER ENGINE: Spawns type-safe threads to calculate hardware error maps.
- */
-export function runHardwareTriage(
-  width: number,
-  height: number,
-  zoom: number,
-  logUpdate: (msg: string) => void,
-  onComplete: (result: QuantumLandscapeResult) => void,
-  audioAllowed: boolean = false,
-): void {
-  logUpdate('⚙️ runHardwareTriage initialized...');
+/** Coordinates WebGPU execution, CPU fallback, cancellation, and fingerprint collection. */
+export function runDeviceProfileProbe(
+  options: DeviceProfileProbeOptions,
+): DeviceProfileProbeController {
+  const {
+    width,
+    height,
+    zoom,
+    logUpdate,
+    onComplete,
+    audioAllowed = false,
+    onError = () => undefined,
+    gpuStabilityEnabled = false,
+  } = options;
+  const workers = new Set<Worker>();
+  const completedWorkers = new Set<Worker>();
+  const abortController = new AbortController();
+  let settled = false;
+  const timeoutId = setTimeout(
+    () => {
+      fail(new Error('The device-profile computation timed out.'));
+    },
+    gpuStabilityEnabled ? 90_000 : 60_000,
+  );
 
-  // 💡 ULTIMATE MOBILE FIX: Detect if the mobile browser is blocking Workers due to an insecure HTTP context
-  if (typeof window !== 'undefined' && !window.Worker) {
-    logUpdate(
-      '⚠️ HTTP Security Sandbox Detected (No Worker access). Switching to Main Thread processing fallback...',
-    );
-
-    // Allocate a single block mock array so the app doesn't crash on your phone
-    const mockMatrix = new Float32Array(width * height);
-    // Fill it with fallback data quickly to verify your React dashboard functions natively
-    for (let i = 0; i < mockMatrix.length; i++) {
-      mockMatrix[i] = Math.sin(i * 0.01) * 0.5 + 0.5;
+  // Stops every active CPU fallback worker.
+  const terminateWorkers = () => {
+    for (const worker of workers) {
+      worker.terminate();
     }
+    workers.clear();
+  };
 
-    const quantumAnalysis = translateToQuantumPotential(mockMatrix, width, height);
-    // onComplete(quantumAnalysis);
-    void finaliseWithFingerprint(
-      quantumAnalysis,
-      width,
-      height,
-      audioAllowed,
-      logUpdate,
-      onComplete,
-    );
-    return;
-  }
+  // Delivers one successful result and prevents later callbacks.
+  const complete = (result: QuantumLandscapeResult) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutId);
+    terminateWorkers();
+    onComplete(result);
+  };
 
-  const hardwareCores = navigator.hardwareConcurrency || 2;
-  const threadCount: number = Math.min(hardwareCores, 2);
+  // Cancels all work before reporting a terminal probe error.
+  const fail = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutId);
+    abortController.abort();
+    terminateWorkers();
+    logUpdate(`Probe failed: ${error.message}`);
+    onError(error);
+  };
 
-  logUpdate(`🧵 Spawning ${threadCount} workers...`);
+  const controller: DeviceProfileProbeController = {
+    // Cancels GPU and CPU work without reporting an error.
+    cancel() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      abortController.abort();
+      terminateWorkers();
+    },
+  };
 
-  const finalMatrix: Float32Array = new Float32Array(width * height);
-  let completedThreads: number = 0;
-  const chunkSize: number = Math.floor(height / threadCount);
-  const jobId = Date.now();
-
-  for (let i = 0; i < threadCount; i++) {
-    try {
-      // Points to compiled file located safely in the public directory
-      const worker = new Worker(new URL('../workers/errorWorker.ts', import.meta.url));
-
-      const startY: number = i * chunkSize;
-      const endY: number = i === threadCount - 1 ? height : (i + 1) * chunkSize;
-
-      worker.onmessage = async (
-        e: MessageEvent<{ type: string; jobId: number; errorChunk: Float32Array; startY: number }>,
-      ) => {
-        const { errorChunk, startY } = e.data;
-        const msg = e.data;
-
-        if (msg.type !== 'pws:tile-response') {
-          return;
-        }
-        if (msg.jobId !== jobId) {
-          return;
-        }
-
-        finalMatrix.set(errorChunk, startY * width);
-        completedThreads++;
-
-        if (completedThreads === threadCount) {
-          logUpdate('✅ All threads aggregated. Translating to Quantum Matrix...');
-          // Instantly pipe collected data array into the quantum landscape translator
-          const quantumAnalysis = translateToQuantumPotential(finalMatrix, width, height);
-          // onComplete(quantumAnalysis);
-          await finaliseWithFingerprint(
-            quantumAnalysis,
-            width,
-            height,
-            audioAllowed,
-            logUpdate,
-            onComplete,
-          );
-          worker.terminate();
-        }
-      };
-
-      worker.onerror = function (err) {
-        logUpdate(`❌ WORKER CRASHED (#${i}): ${err.message}`);
-      };
-
-      worker.postMessage({
-        type: 'pws:tile-request',
-        jobId,
-        width,
-        startY,
-        endY,
-        totalHeight: height,
-        zoom,
+  // Adds browser and server matching results to a completed fractal analysis.
+  const finalize = (quantumAnalysis: QuantumLandscapeResult) => {
+    void finaliseWithFingerprint(quantumAnalysis, width, height, audioAllowed, logUpdate)
+      .then(complete)
+      .catch((error: unknown) => {
+        fail(error instanceof Error ? error : new Error(String(error)));
       });
-    } catch (error: any) {
-      logUpdate(`💥 CRITICAL EXECUTION BLOCKER: ${error.message}`);
+  };
+
+  // Converts a backend matrix into the common result model.
+  const finalizeMatrix = (
+    matrix: Float32Array,
+    backend: FractalBackend,
+    durationMs: number,
+    gpuStability?: GpuFractalStability,
+  ) => {
+    finalize({
+      ...translateToQuantumPotential(matrix, width, height),
+      fractalBackend: backend,
+      fractalDurationMs: durationMs,
+      gpuStability,
+    });
+  };
+
+  // Runs the original tiled CPU implementation when WebGPU cannot be used.
+  const startWorkerFallback = () => {
+    if (settled) return;
+    const startedAt = performance.now();
+
+    if (typeof Worker === 'undefined') {
+      logUpdate('Web Workers are unavailable. Using a deterministic main-thread fallback.');
+      const mockMatrix = new Float32Array(width * height);
+      for (let i = 0; i < mockMatrix.length; i++) {
+        mockMatrix[i] = Math.sin(i * 0.01) * 0.5 + 0.5;
+      }
+
+      finalizeMatrix(mockMatrix, 'cpu-main', performance.now() - startedAt);
+      return;
     }
-  }
+
+    const hardwareCores = navigator.hardwareConcurrency || 2;
+    const threadCount = Math.min(hardwareCores, 2);
+    logUpdate(`Starting ${threadCount} CPU workers...`);
+
+    const finalMatrix = new Float32Array(width * height);
+    const chunkSize = Math.floor(height / threadCount);
+    const jobId = Date.now();
+
+    for (let i = 0; i < threadCount; i++) {
+      try {
+        const worker = new Worker(new URL('../workers/errorWorker.ts', import.meta.url));
+        workers.add(worker);
+
+        const startY = i * chunkSize;
+        const endY = i === threadCount - 1 ? height : (i + 1) * chunkSize;
+
+        worker.onmessage = (event: MessageEvent<WorkerOutbound>) => {
+          const message = event.data;
+          if (settled || message.jobId !== jobId) return;
+
+          if (message.type === 'pws:error') {
+            fail(new Error(message.message));
+            return;
+          }
+
+          if (completedWorkers.has(worker)) return;
+
+          const offset = message.startY * width;
+          if (
+            message.startY < 0 ||
+            offset + message.errorChunk.length > finalMatrix.length ||
+            message.errorChunk.length % width !== 0
+          ) {
+            fail(new Error(`Worker ${i} returned an invalid tile.`));
+            return;
+          }
+
+          finalMatrix.set(message.errorChunk, offset);
+          completedWorkers.add(worker);
+
+          if (completedWorkers.size === threadCount) {
+            logUpdate('All CPU worker tiles completed. Building the profile...');
+            terminateWorkers();
+            finalizeMatrix(finalMatrix, 'cpu-worker', performance.now() - startedAt);
+          }
+        };
+
+        worker.onerror = (event) => {
+          fail(new Error(`Worker ${i} crashed: ${event.message || 'unknown error'}`));
+        };
+
+        worker.postMessage({
+          type: 'pws:tile-request',
+          jobId,
+          width,
+          startY,
+          endY,
+          totalHeight: height,
+          zoom,
+        });
+      } catch (error: unknown) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+        break;
+      }
+    }
+  };
+
+  // Prefers WebGPU and falls back only for non-cancellation failures.
+  const startProbe = async () => {
+    logUpdate('Initializing synthetic device-profile probe...');
+
+    if (navigator.gpu) {
+      try {
+        const gpuResult = await runGpuFractalProbe({
+          width,
+          height,
+          zoom,
+          stabilityTest: gpuStabilityEnabled,
+          signal: abortController.signal,
+          onStatus: logUpdate,
+        });
+        if (settled) return;
+        logUpdate(`WebGPU fractal completed in ${gpuResult.durationMs.toFixed(1)} ms.`);
+        finalizeMatrix(gpuResult.grid, 'webgpu', gpuResult.durationMs, gpuResult.stability);
+        return;
+      } catch (error: unknown) {
+        if (settled) return;
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          fail(error);
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        logUpdate(`WebGPU fractal unavailable: ${message}`);
+      }
+    } else {
+      logUpdate('WebGPU is unavailable. Using the CPU fractal fallback.');
+    }
+
+    startWorkerFallback();
+  };
+
+  void startProbe().catch((error: unknown) => {
+    fail(error instanceof Error ? error : new Error(String(error)));
+  });
+
+  return controller;
 }
 
-/**
- * Runs the composite fingerprint probes against the assembled `potentialGrid`,
- * then delivers the enriched `QuantumLandscapeResult` via `onComplete`.
- *
- * If fingerprinting fails for any reason, the original (un-enriched) result
- * is still delivered — the triage never blocks on the fingerprint.
- */
+/** Builds the browser profile and requests a persistent server-side device match. */
 async function finaliseWithFingerprint(
   quantumAnalysis: QuantumLandscapeResult,
   width: number,
   height: number,
   audioAllowed: boolean,
   logUpdate: (msg: string) => void,
-  onComplete: (result: QuantumLandscapeResult) => void,
-): Promise<void> {
+): Promise<QuantumLandscapeResult> {
   try {
-    logUpdate('🔬 Computing composite hardware fingerprint...');
+    logUpdate('Collecting browser and device-profile signals...');
 
     const fingerprint = await computeDeviceFingerprint({
       potentialGrid: quantumAnalysis.potentialGrid,
@@ -183,66 +304,82 @@ async function finaliseWithFingerprint(
       audioAllowed,
     });
 
-    logUpdate(`🔑 Fingerprint: ${fingerprint.id.slice(0, 16)}...`);
+    for (const warning of fingerprint.warnings) {
+      logUpdate(`Optional probe unavailable: ${warning}`);
+    }
 
-    onComplete({
+    try {
+      logUpdate('Submitting normalized observation to the device matcher...');
+      const match = await registerDeviceObservation(fingerprint.observation);
+      logUpdate(
+        match.matched
+          ? `Matched an existing device cluster with ${(match.confidence * 100).toFixed(1)}% confidence.`
+          : 'Created a new server-side device cluster.',
+      );
+
+      return {
+        ...quantumAnalysis,
+        browserProfileId: fingerprint.id,
+        browserProfileCanonical: fingerprint.canonical,
+        deviceClusterId: match.deviceClusterId,
+        deviceMatchConfidence: match.confidence,
+        deviceMatchEvidence: match.evidence,
+        matchedExistingDevice: match.matched,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logUpdate(`Device matcher unavailable: ${message}`);
+      return {
+        ...quantumAnalysis,
+        browserProfileId: fingerprint.id,
+        browserProfileCanonical: fingerprint.canonical,
+        deviceMatchError: message,
+      };
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logUpdate(`Composite fingerprint unavailable: ${message}`);
+    return {
       ...quantumAnalysis,
-      fingerprintId: fingerprint.id,
-      crossBrowserHardwareId: fingerprint.hardwareId,
-      fingerprintCanonical: fingerprint.canonical,
-      // features are attached inside computeDeviceFingerprint;
-      // expose them here for the dashboard if desired.
-      // features: fingerprint.features,
-    });
-  } catch (err: any) {
-    logUpdate(`⚠️ Fingerprint failed (non-fatal): ${err.message}`);
-    onComplete(quantumAnalysis);
+      deviceMatchError: message,
+    };
   }
 }
 
-/**
- * Generates a fast, unique cryptographic bitwise hash of the entire 1M float matrix.
- */
-export function generateHardwareHash(matrix: Float32Array): string {
+/** Produces a small non-cryptographic fallback identifier for a grid. */
+export function generateGridHash(matrix: Float32Array): string {
   let hash = 0;
   for (let i = 0; i < matrix.length; i++) {
-    // Blazing-fast bitwise hashing loop over the 1,000,000 floats
     hash = (hash << 5) - hash + matrix[i];
     hash |= 0;
   }
-  return 'HW-SIG-' + Math.abs(hash).toString(16).toUpperCase();
+  return 'GRID-SIG-' + Math.abs(hash).toString(16).toUpperCase();
 }
 
-/**
- * 256-Bit Hardware Digest Engine
- * Converts the 1M float array straight into a unique 64-character token.
- */
-export async function generateHardwareHash256(matrix: Float32Array): Promise<string> {
-  // 💡 THE ULTIMATE OVERRIDE: Pass the native Float32Array matrix directly.
-  // Cast it explicitly 'as BufferSource' to force the linter to clear the assertion path.
+/** Produces a SHA-256 fallback identifier when Web Crypto is available. */
+export async function generateGridHash256(matrix: Float32Array): Promise<string> {
   const targetSource = matrix as BufferSource;
-
-  // Execute the crypto digest natively
   const hashBuffer = await crypto.subtle.digest('SHA-256', targetSource);
   const hashArray = new Uint8Array(hashBuffer);
-
-  // Convert the raw binary array into an ultra-long hexadecimal string block
   const hexString = Array.from(hashArray)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
     .toUpperCase();
 
-  return `HW-LONGID-${hexString}`;
+  return `GRID-SHA256-${hexString}`;
 }
 
-/**
- * Analyzes the structural data variance to find where deviations actually occur.
- */
+/** Summarizes finite non-zero grid values and counts invalid entries. */
 export function analyzeMatrixVariance(matrix: Float32Array): MatrixVarianceAnalysis {
   let activeGlitches = 0;
   let totalErrorMagnitude = 0;
+  let invalidValues = 0;
 
   for (let i = 0; i < matrix.length; i++) {
+    if (!Number.isFinite(matrix[i])) {
+      invalidValues++;
+      continue;
+    }
     if (matrix[i] > 0.0) {
       activeGlitches++;
       totalErrorMagnitude += matrix[i];
@@ -251,6 +388,8 @@ export function analyzeMatrixVariance(matrix: Float32Array): MatrixVarianceAnaly
 
   return {
     activeGlitches,
-    averageDrift: totalErrorMagnitude / matrix.length,
+    averageDrift:
+      matrix.length > invalidValues ? totalErrorMagnitude / (matrix.length - invalidValues) : NaN,
+    invalidValues,
   };
 }
