@@ -95,6 +95,7 @@ export function runHardwareTriage(
   const finalMatrix: Float32Array = new Float32Array(width * height);
   let completedThreads: number = 0;
   const chunkSize: number = Math.floor(height / threadCount);
+  const jobId = Date.now();
 
   for (let i = 0; i < threadCount; i++) {
     try {
@@ -104,8 +105,17 @@ export function runHardwareTriage(
       const startY: number = i * chunkSize;
       const endY: number = i === threadCount - 1 ? height : (i + 1) * chunkSize;
 
-      worker.onmessage = function (e: MessageEvent<{ errorChunk: Float32Array; startY: number }>) {
+      worker.onmessage = function (e: MessageEvent<{ type: string, jobId: number, errorChunk: Float32Array; startY: number }>) {
         const { errorChunk, startY } = e.data;
+        const msg = e.data;
+
+        if (msg.type === 'pws:tile-response') {
+          return;
+        }
+        if (msg.jobId !== jobId) {
+          return;
+        }
+
         finalMatrix.set(errorChunk, startY * width);
         completedThreads++;
 
@@ -130,7 +140,7 @@ export function runHardwareTriage(
         logUpdate(`❌ WORKER CRASHED (#${i}): ${err.message}`);
       };
 
-      worker.postMessage({ width, startY, endY, totalHeight: height, zoom });
+      worker.postMessage({ type: 'pws:title-request', jobId, width, startY, endY, totalHeight: height, zoom });
     } catch (error: any) {
       logUpdate(`💥 CRITICAL EXECUTION BLOCKER: ${error.message}`);
     }
