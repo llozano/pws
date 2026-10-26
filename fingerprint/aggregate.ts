@@ -1,3 +1,4 @@
+// fingerprint/aggregate.ts
 import { sha256Hex } from './hash';
 import { GridFeatures } from './features';
 import { WebGLSignals } from './probes/webgl';
@@ -13,10 +14,6 @@ export interface FingerprintInputs {
   screenHash?: string;
 }
 
-/**
- * Canonicalize floats so tiny nondeterminism on probes doesn't destroy
- * stability but real differences survive. `digits` controls precision.
- */
 function round(n: number, digits = 4): number {
   if (!Number.isFinite(n)) return 0;
   const m = Math.pow(10, digits);
@@ -24,9 +21,30 @@ function round(n: number, digits = 4): number {
 }
 
 export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
-  id: string;
+  id: string; // Browser-scoped full fingerprint
+  hardwareId: string; // Cross-browser pure hardware fingerprint
   canonical: string;
 }> {
+  // 1. Pure Hardware Canonical State (No browser-dependent canvas/audio/UA signals)
+  const hardwareCanonical = JSON.stringify({
+    v: 1,
+    grid: {
+      quantizedFingerprint: inputs.gridFeatures.quantizedFingerprint,
+      variance: round(inputs.gridFeatures.variance, 2),
+      entropy: round(inputs.gridFeatures.entropy, 2),
+      gradMean: round(inputs.gridFeatures.gradMean, 2),
+    },
+    webgpu: inputs.webgpu && {
+      adapter: {
+        vendor: inputs.webgpu.adapter.vendor,
+        architecture: inputs.webgpu.adapter.architecture,
+        device: inputs.webgpu.adapter.device,
+      },
+      matrixHash: inputs.webgpu.matrixHash,
+    },
+  });
+
+  // 2. Full Browser-Scoped Canonical State (Your existing comprehensive profile)
   const canonical = JSON.stringify({
     v: 2,
     grid: {
@@ -44,7 +62,7 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
       renderer: inputs.webgl.renderer,
       vendor: inputs.webgl.vendor,
       version: inputs.webgl.version,
-      extensions: inputs.webgl.extensions, // full sorted list
+      extensions: inputs.webgl.extensions,
       limits: inputs.webgl.limits,
       precision: inputs.webgl.precision,
       shaderHash: inputs.webgl.shaderHash,
@@ -59,7 +77,6 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
         limits: inputs.webgpu.adapter.limits,
       },
       matrixHash: inputs.webgpu.matrixHash,
-      // atomicScaling: inputs.webgpu.atomicScaling.map((v) => round(v / (inputs.webgpu?.atomicScaling[0] || 1), 2)),
     },
     canvas: inputs.canvasHash,
     audio: inputs.audioHash,
@@ -68,5 +85,7 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
   });
 
   const id = await sha256Hex(canonical);
-  return { id, canonical };
+  const hardwareId = await sha256Hex(hardwareCanonical);
+
+  return { id, hardwareId, canonical };
 }
