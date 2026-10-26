@@ -27,13 +27,18 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
 }> {
   // 1. Pure Hardware Canonical State (No browser-dependent canvas/audio/UA signals)
   const hardwareCanonical = JSON.stringify({
-    v: 2,
-    // Use the quantized string instead of exact float variance/entropy numbers
+    v: 3,
+    // Physical GPU Silicon Info (Same across Chrome & Safari on the same device)
+    gpuDevice: inputs.webgpu?.adapter.device || 'unknown',
+    gpuArchitecture: inputs.webgpu?.adapter.architecture || 'unknown',
+    gpuVendor: inputs.webgpu?.adapter.vendor || 'unknown',
+    // CPU Core Count (Hardware level)
+    cores: navigator.hardwareConcurrency || 0,
+    // Display profile (Physical screen specs)
+    screen: inputs.screenHash,
+    // Coarse math shape from the CPU worker
     shape: inputs.gridFeatures.quantizedFingerprint,
-    // Coarse entropy bucket (rounded to nearest integer so small engine diffs don't break it)
     entropyBucket: Math.round(inputs.gridFeatures.entropy),
-    // Coarse gradient mean bucket
-    gradBucket: Math.round(inputs.gridFeatures.gradMean * 10) / 10,
   });
 
   // 2. Full Browser-Scoped Canonical State (Your existing comprehensive profile)
