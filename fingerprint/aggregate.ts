@@ -27,17 +27,14 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
 }> {
   // 1. Pure Hardware Canonical State (No browser-dependent canvas/audio/UA signals)
   const hardwareCanonical = JSON.stringify({
-    v: 3,
-    // Physical GPU Silicon Info (Same across Chrome & Safari on the same device)
-    gpuDevice: inputs.webgpu?.adapter.device || 'unknown',
-    gpuArchitecture: inputs.webgpu?.adapter.architecture || 'unknown',
-    gpuVendor: inputs.webgpu?.adapter.vendor || 'unknown',
-    // CPU Core Count (Hardware level)
+    v: 4,
+    // 1. Physical CPU Core Count (e.g., 8, 10, 12) - Stable across browsers on the same machine
     cores: navigator.hardwareConcurrency || 0,
-    // Display profile (Physical screen specs)
-    screen: inputs.screenHash,
-    // Coarse math shape from the CPU worker
+    // 2. Approximate Device RAM in GB (e.g., 8, 16, 32) - Stable across browsers
+    memory: (navigator as any).deviceMemory || 0,
+    // 3. Coarse Math Error Grid Shape from CPU worker
     shape: inputs.gridFeatures.quantizedFingerprint,
+    // 4. Coarse Entropy Bucket
     entropyBucket: Math.round(inputs.gridFeatures.entropy),
   });
 
