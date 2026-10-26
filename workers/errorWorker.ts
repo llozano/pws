@@ -1,8 +1,10 @@
 /// <reference lib="webworker" />
+import { MANDELBROT_PROBE } from '@/fingerprint/fractalConfig';
 import type { WorkerInbound, WorkerOutbound } from './messages';
 
 declare const self: DedicatedWorkerGlobalScope;
 
+// Computes one horizontal tile of the Mandelbrot difference grid.
 self.onmessage = function (e: MessageEvent<WorkerInbound>): void {
   const msg = e.data;
   if (!msg || msg.type !== 'pws:tile-request') return;
@@ -13,9 +15,9 @@ self.onmessage = function (e: MessageEvent<WorkerInbound>): void {
     const chunkHeight: number = endY - startY;
     const errorChunk: Float32Array = new Float32Array(width * chunkHeight);
 
-    const maxIterations: number = 100;
-    const targetX: number = -0.7436;
-    const targetY: number = 0.1318;
+    const maxIterations = MANDELBROT_PROBE.defaultMaxIterations;
+    const targetX = MANDELBROT_PROBE.targetX;
+    const targetY = MANDELBROT_PROBE.targetY;
 
     for (let y = startY; y < endY; y++) {
       const uvY: number = (y - 0.5 * totalHeight) / totalHeight;
@@ -40,16 +42,32 @@ self.onmessage = function (e: MessageEvent<WorkerInbound>): void {
 
           let nextGlitchX = zx_glitch * zx_glitch - zy_glitch * zy_glitch + cx;
           let nextGlitchY = 2.0 * zx_glitch * zy_glitch + cy;
-          nextGlitchX = Math.floor(nextGlitchX * 64.0) / 64.0;
-          nextGlitchY = Math.floor(nextGlitchY * 64.0) / 64.0;
+          nextGlitchX =
+            Math.floor(nextGlitchX * MANDELBROT_PROBE.quantizationScale) /
+            MANDELBROT_PROBE.quantizationScale;
+          nextGlitchY =
+            Math.floor(nextGlitchY * MANDELBROT_PROBE.quantizationScale) /
+            MANDELBROT_PROBE.quantizationScale;
           zx_glitch = nextGlitchX;
           zy_glitch = nextGlitchY;
 
           const dx = zx_smooth - zx_glitch;
           const dy = zy_smooth - zy_glitch;
-          accumulatedError += Math.sqrt(dx * dx + dy * dy);
+          const delta = Math.sqrt(dx * dx + dy * dy);
+          accumulatedError += Number.isFinite(delta)
+            ? Math.min(delta, MANDELBROT_PROBE.maxDeltaPerIteration)
+            : MANDELBROT_PROBE.maxDeltaPerIteration;
 
-          if (zx_smooth * zx_smooth + zy_smooth * zy_smooth > 4.0) break;
+          const smoothRadius = zx_smooth * zx_smooth + zy_smooth * zy_smooth;
+          const quantizedRadius = zx_glitch * zx_glitch + zy_glitch * zy_glitch;
+          if (
+            !Number.isFinite(smoothRadius) ||
+            !Number.isFinite(quantizedRadius) ||
+            smoothRadius > 4.0 ||
+            quantizedRadius > 4.0
+          ) {
+            break;
+          }
         }
         errorChunk[chunkOffset + x] = accumulatedError;
       }

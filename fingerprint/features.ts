@@ -17,6 +17,13 @@ export function extractGridFeatures(
   width: number,
   height: number,
 ): GridFeatures {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error('Grid dimensions must be positive integers.');
+  }
+  if (grid.length !== width * height) {
+    throw new Error('Grid dimensions do not match the supplied data.');
+  }
+
   const n = grid.length;
   let min = Infinity,
     max = -Infinity,
@@ -77,15 +84,20 @@ export function extractGridFeatures(
       cc += (grid[i] - mean) * (grid[i + 1] - mean);
     }
   }
-  const gradMean = gs / cnt;
-  const gradVar = gs2 / cnt - gradMean * gradMean;
-  const crossCorr = cc / n / variance;
+  const gradMean = cnt > 0 ? gs / cnt : 0;
+  const gradVar = cnt > 0 ? Math.max(0, gs2 / cnt - gradMean * gradMean) : 0;
+  const crossCorr = cnt > 0 && variance > 0 ? cc / cnt / variance : 0;
 
-  // Coarse bucketed signature: quantize to 8 buckets and keep first 64
-  // values as a string — reflects *shape* of errors, robust to tiny jitter.
   let q = '';
-  for (let i = 0; i < Math.min(64, n); i++) {
-    q += String(Math.min(7, Math.max(0, Math.floor(((grid[i] - min) / span) * 8))));
+  const sampleWidth = Math.min(8, width);
+  const sampleHeight = Math.min(8, height);
+  for (let sampleY = 0; sampleY < sampleHeight; sampleY++) {
+    const y = sampleHeight === 1 ? 0 : Math.round((sampleY * (height - 1)) / (sampleHeight - 1));
+    for (let sampleX = 0; sampleX < sampleWidth; sampleX++) {
+      const x = sampleWidth === 1 ? 0 : Math.round((sampleX * (width - 1)) / (sampleWidth - 1));
+      const value = grid[y * width + x];
+      q += String(Math.min(7, Math.max(0, Math.floor(((value - min) / span) * 8))));
+    }
   }
 
   return {

@@ -9,6 +9,10 @@ export interface WebGLSignals {
   limits: Record<string, number>;
   precision: Record<string, { rangeMin: number; rangeMax: number; precision: number }>;
   shaderHash: string;
+  timing: {
+    ratios: number[];
+    dispersion: number;
+  };
 }
 
 export function collectWebGLSignals(
@@ -47,7 +51,7 @@ export function collectWebGLSignals(
     'MAX_COMBINED_TEXTURE_IMAGE_UNITS',
   ];
   for (const name of limitNames) {
-    const pname = (gl as any)[name] as number | undefined;
+    const pname = Reflect.get(gl, name);
     if (pname === undefined) continue;
     const v = gl.getParameter(pname);
     if (typeof v === 'number') limits[name] = v;
@@ -79,6 +83,7 @@ export function collectWebGLSignals(
   }
 
   const shaderHash = runShaderProbe(gl);
+  const timing = runTimingProbe(gl);
 
   return {
     renderer,
@@ -89,6 +94,7 @@ export function collectWebGLSignals(
     limits,
     precision,
     shaderHash,
+    timing,
   };
 }
 
@@ -131,7 +137,11 @@ function runShaderProbe(gl: WebGLRenderingContext): string {
 
   gl.useProgram(prog);
   const loc = gl.getAttribLocation(prog, 'a_pos');
-  const buf = gl.createBuffer()!;
+  const buf = gl.createBuffer();
+  if (!buf || loc < 0) {
+    gl.deleteProgram(prog);
+    return '';
+  }
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(loc);
@@ -153,22 +163,124 @@ function runShaderProbe(gl: WebGLRenderingContext): string {
     pixels,
   );
 
-  return fnv1a(pixels);
+  const hash = fnv1a(pixels);
+  gl.deleteBuffer(buf);
+  gl.deleteProgram(prog);
+  return hash;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function runTimingProbe(gl: WebGLRenderingContext): WebGLSignals['timing'] {
+  const measurements: Array<{ duration: number; dispersion: number }> = [];
+
+  for (const iterations of [20, 40, 80, 120]) {
+    const program = linkProgram(
+      gl,
+      `
+        attribute vec2 a_pos;
+        void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }
+      `,
+      `
+        precision highp float;
+        void main(){
+          vec2 z = gl_FragCoord.xy * 0.00390625;
+          for (int i = 0; i < ${iterations}; i++) {
+            z = fract(vec2(
+              sin(z.x * 1.13 + z.y * 0.71),
+              cos(z.y * 1.07 - z.x * 0.67)
+            ) * 17.0);
+          }
+          gl_FragColor = vec4(z, fract(z.x + z.y), 1.0);
+        }
+      `,
+    );
+    if (!program) continue;
+
+    const buffer = gl.createBuffer();
+    const location = gl.getAttribLocation(program, 'a_pos');
+    if (!buffer || location < 0) {
+      if (buffer) gl.deleteBuffer(buffer);
+      gl.deleteProgram(program);
+      continue;
+    }
+
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(location);
+    gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+    for (let warmup = 0; warmup < 2; warmup++) {
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.finish();
+    }
+
+    const samples: number[] = [];
+    for (let sample = 0; sample < 7; sample++) {
+      const startedAt = performance.now();
+      for (let repeat = 0; repeat < 3; repeat++) {
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+      gl.finish();
+      samples.push(performance.now() - startedAt);
+    }
+
+    const duration = median(samples);
+    const dispersion =
+      duration > 0 ? median(samples.map((sample) => Math.abs(sample - duration))) / duration : 1;
+    measurements.push({ duration, dispersion });
+
+    gl.deleteBuffer(buffer);
+    gl.deleteProgram(program);
+  }
+
+  const baseline = measurements[0]?.duration || 1;
+  return {
+    ratios: measurements.map(({ duration }) => duration / baseline),
+    dispersion:
+      measurements.length > 0
+        ? measurements.reduce((total, value) => total + value.dispersion, 0) / measurements.length
+        : 1,
+  };
 }
 
 function linkProgram(gl: WebGLRenderingContext, vsSrc: string, fsSrc: string) {
   const compile = (type: number, src: string) => {
-    const sh = gl.createShader(type)!;
+    const sh = gl.createShader(type);
+    if (!sh) return null;
     gl.shaderSource(sh, src);
     gl.compileShader(sh);
-    return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null;
+    if (gl.getShaderParameter(sh, gl.COMPILE_STATUS)) return sh;
+    gl.deleteShader(sh);
+    return null;
   };
   const vs = compile(gl.VERTEX_SHADER, vsSrc);
   const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
-  if (!vs || !fs) return null;
-  const prog = gl.createProgram()!;
+  if (!vs || !fs) {
+    if (vs) gl.deleteShader(vs);
+    if (fs) gl.deleteShader(fs);
+    return null;
+  }
+  const prog = gl.createProgram();
+  if (!prog) {
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    return null;
+  }
   gl.attachShader(prog, vs);
   gl.attachShader(prog, fs);
   gl.linkProgram(prog);
-  return gl.getProgramParameter(prog, gl.LINK_STATUS) ? prog : null;
+  gl.detachShader(prog, vs);
+  gl.detachShader(prog, fs);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (gl.getProgramParameter(prog, gl.LINK_STATUS)) return prog;
+  gl.deleteProgram(prog);
+  return null;
 }

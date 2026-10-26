@@ -1,8 +1,13 @@
-// fingerprint/aggregate.ts
 import { sha256Hex } from './hash';
-import { GridFeatures } from './features';
-import { WebGLSignals } from './probes/webgl';
-import { WebGPUSignals } from './probes/webgpu';
+import type { GridFeatures } from './features';
+import type { WebGLSignals } from './probes/webgl';
+import type { WebGPUSignals } from './probes/webgpu';
+import type { CpuTimingSignals } from './probes/cpu';
+import {
+  createDeviceObservation,
+  type DeviceObservation,
+  type UserAgentSignals,
+} from './observation';
 
 export interface FingerprintInputs {
   gridFeatures: GridFeatures;
@@ -10,7 +15,8 @@ export interface FingerprintInputs {
   webgpu: WebGPUSignals | null;
   canvasHash: string;
   audioHash: string;
-  uaData?: { platform?: string; arch?: string; bitness?: string; mobile?: boolean };
+  cpuTiming: CpuTimingSignals | null;
+  uaData: UserAgentSignals;
   screenHash?: string;
 }
 
@@ -20,27 +26,17 @@ function round(n: number, digits = 4): number {
   return Math.round(n * m) / m;
 }
 
-export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
-  id: string; // Browser-scoped full fingerprint
-  hardwareId: string; // Cross-browser pure hardware fingerprint
-  canonical: string;
-}> {
-  // 1. Pure Hardware Canonical State (No browser-dependent canvas/audio/UA signals)
-  const hardwareCanonical = JSON.stringify({
-    v: 4,
-    // 1. Physical CPU Core Count (e.g., 8, 10, 12) - Stable across browsers on the same machine
-    cores: navigator.hardwareConcurrency || 0,
-    // 2. Approximate Device RAM in GB (e.g., 8, 16, 32) - Stable across browsers
-    memory: (navigator as any).deviceMemory || 0,
-    // 3. Coarse Math Error Grid Shape from CPU worker
-    shape: inputs.gridFeatures.quantizedFingerprint,
-    // 4. Coarse Entropy Bucket
-    entropyBucket: Math.round(inputs.gridFeatures.entropy),
-  });
+function sortedRecord<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
+}
 
-  // 2. Full Browser-Scoped Canonical State (Your existing comprehensive profile)
+export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
+  id: string;
+  canonical: string;
+  observation: DeviceObservation;
+}> {
   const canonical = JSON.stringify({
-    v: 2,
+    v: 4,
     grid: {
       ...inputs.gridFeatures,
       mean: round(inputs.gridFeatures.mean, 6),
@@ -57,8 +53,8 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
       vendor: inputs.webgl.vendor,
       version: inputs.webgl.version,
       extensions: inputs.webgl.extensions,
-      limits: inputs.webgl.limits,
-      precision: inputs.webgl.precision,
+      limits: sortedRecord(inputs.webgl.limits),
+      precision: sortedRecord(inputs.webgl.precision),
       shaderHash: inputs.webgl.shaderHash,
     },
     webgpu: inputs.webgpu && {
@@ -68,9 +64,15 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
         device: inputs.webgpu.adapter.device,
         description: inputs.webgpu.adapter.description,
         features: inputs.webgpu.adapter.features,
-        limits: inputs.webgpu.adapter.limits,
+        limits: sortedRecord(inputs.webgpu.adapter.limits),
       },
-      matrixHash: inputs.webgpu.matrixHash,
+      matrix: {
+        mean: round(inputs.webgpu.matrix.mean, 6),
+        variance: round(inputs.webgpu.matrix.variance, 6),
+        min: round(inputs.webgpu.matrix.min, 6),
+        max: round(inputs.webgpu.matrix.max, 6),
+        quantized: inputs.webgpu.matrix.quantized,
+      },
     },
     canvas: inputs.canvasHash,
     audio: inputs.audioHash,
@@ -79,7 +81,13 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
   });
 
   const id = await sha256Hex(canonical);
-  const hardwareId = await sha256Hex(hardwareCanonical);
+  const observation = createDeviceObservation({
+    gridFeatures: inputs.gridFeatures,
+    webgl: inputs.webgl,
+    webgpu: inputs.webgpu,
+    cpuTiming: inputs.cpuTiming,
+    ua: inputs.uaData,
+  });
 
-  return { id, hardwareId, canonical };
+  return { id, canonical, observation };
 }
