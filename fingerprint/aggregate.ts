@@ -27,21 +27,13 @@ export async function buildFingerprint(inputs: FingerprintInputs): Promise<{
 }> {
   // 1. Pure Hardware Canonical State (No browser-dependent canvas/audio/UA signals)
   const hardwareCanonical = JSON.stringify({
-    v: 1,
-    grid: {
-      quantizedFingerprint: inputs.gridFeatures.quantizedFingerprint,
-      variance: round(inputs.gridFeatures.variance, 2),
-      entropy: round(inputs.gridFeatures.entropy, 2),
-      gradMean: round(inputs.gridFeatures.gradMean, 2),
-    },
-    webgpu: inputs.webgpu && {
-      adapter: {
-        vendor: inputs.webgpu.adapter.vendor,
-        architecture: inputs.webgpu.adapter.architecture,
-        device: inputs.webgpu.adapter.device,
-      },
-      matrixHash: inputs.webgpu.matrixHash,
-    },
+    v: 2,
+    // Use the quantized string instead of exact float variance/entropy numbers
+    shape: inputs.gridFeatures.quantizedFingerprint,
+    // Coarse entropy bucket (rounded to nearest integer so small engine diffs don't break it)
+    entropyBucket: Math.round(inputs.gridFeatures.entropy),
+    // Coarse gradient mean bucket
+    gradBucket: Math.round(inputs.gridFeatures.gradMean * 10) / 10,
   });
 
   // 2. Full Browser-Scoped Canonical State (Your existing comprehensive profile)
