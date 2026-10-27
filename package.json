@@ -8,6 +8,7 @@
     "dev": "next dev",
     "build": "rm -rf out && next build",
     "start": "next start",
+    "db:migrate": "node db-migration/migrate.mjs",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
@@ -15,6 +16,7 @@
     "format:check": "prettier . --check"
   },
   "dependencies": {
+    "mysql2": "^3.24.6",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"

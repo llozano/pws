@@ -14,6 +14,11 @@ interface Similarity {
 
 const MATCH_THRESHOLD = 0.78;
 const MIN_EVIDENCE = 0.42;
+export const CLUSTER_MERGE_THRESHOLD = 0.9;
+
+export interface DeviceMatchCandidate extends DeviceMatchResult {
+  similarityScore: number;
+}
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -40,6 +45,12 @@ function tokenSimilarity(left: string, right: string): number | null {
     if (rightTokens.has(token)) intersection++;
   }
   return intersection / union.size;
+}
+
+function gpuModelSimilarity(left: string, right: string): number | null {
+  const genericModel = /^(gpu|graphics|graphics adapter|renderer|generic|unknown)$/;
+  if (genericModel.test(left) || genericModel.test(right)) return null;
+  return tokenSimilarity(left, right);
 }
 
 function vectorSimilarity(left: number[], right: number[]): number | null {
@@ -106,7 +117,7 @@ export function compareDeviceObservations(
       0.15,
       categoricalSimilarity(left.graphics.descriptor.vendor, right.graphics.descriptor.vendor),
     ],
-    [0.2, tokenSimilarity(left.graphics.descriptor.model, right.graphics.descriptor.model)],
+    [0.2, gpuModelSimilarity(left.graphics.descriptor.model, right.graphics.descriptor.model)],
     [0.08, recordSimilarity(left.graphics.webglLimits, right.graphics.webglLimits)],
     [0.08, recordSimilarity(left.graphics.webgpuLimits, right.graphics.webgpuLimits)],
     [0.1, matrixSimilarity(left.graphics.matrix, right.graphics.matrix)],
@@ -144,37 +155,45 @@ export function compareDeviceObservations(
   };
 }
 
+export function findDeviceMatches(
+  observation: DeviceObservation,
+  clusters: StoredDeviceCluster[],
+): DeviceMatchCandidate[] {
+  const matches: DeviceMatchCandidate[] = [];
+
+  for (const cluster of clusters) {
+    let bestScore = 0;
+    let bestEvidence = 0;
+    for (const existing of cluster.observations) {
+      const similarity = compareDeviceObservations(observation, existing);
+      if (
+        similarity.score > bestScore ||
+        (similarity.score === bestScore && similarity.evidence > bestEvidence)
+      ) {
+        bestScore = similarity.score;
+        bestEvidence = similarity.evidence;
+      }
+    }
+
+    if (bestScore >= MATCH_THRESHOLD && bestEvidence >= MIN_EVIDENCE) {
+      matches.push({
+        deviceClusterId: cluster.id,
+        confidence: clamp(bestScore * Math.min(1, bestEvidence / 0.65)),
+        evidence: bestEvidence,
+        matched: true,
+        similarityScore: bestScore,
+      });
+    }
+  }
+
+  return matches.sort(
+    (left, right) => right.similarityScore - left.similarityScore || right.evidence - left.evidence,
+  );
+}
+
 export function findDeviceMatch(
   observation: DeviceObservation,
   clusters: StoredDeviceCluster[],
 ): DeviceMatchResult | null {
-  let best:
-    | {
-        cluster: StoredDeviceCluster;
-        score: number;
-        evidence: number;
-      }
-    | undefined;
-
-  for (const cluster of clusters) {
-    for (const existing of cluster.observations) {
-      const similarity = compareDeviceObservations(observation, existing);
-      if (!best || similarity.score > best.score) {
-        best = {
-          cluster,
-          score: similarity.score,
-          evidence: similarity.evidence,
-        };
-      }
-    }
-  }
-
-  if (!best || best.score < MATCH_THRESHOLD || best.evidence < MIN_EVIDENCE) return null;
-
-  return {
-    deviceClusterId: best.cluster.id,
-    confidence: clamp(best.score * Math.min(1, best.evidence / 0.65)),
-    evidence: best.evidence,
-    matched: true,
-  };
+  return findDeviceMatches(observation, clusters)[0] ?? null;
 }

@@ -135,4 +135,22 @@ describe('device matcher', () => {
 
     expect(findDeviceMatch(second, [cluster(first)])).toBeNull();
   });
+
+  it('does not penalize a browser that exposes only a generic GPU model', () => {
+    const detailed = observation();
+    const generic = observation({
+      graphics: {
+        descriptor: {
+          vendor: 'apple',
+          model: 'gpu',
+          backend: 'unknown',
+        },
+      },
+    });
+
+    expect(findDeviceMatch(generic, [cluster(detailed)])).toMatchObject({
+      deviceClusterId: 'cluster-1',
+      matched: true,
+    });
+  });
 });

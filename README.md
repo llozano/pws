@@ -48,7 +48,8 @@ of identity or as a replacement for passwords, passkeys, or other authentication
 
 7. **The server returns a device cluster ID.**  
    If the observation is similar enough to an existing cluster, the existing ID is returned.
-   Otherwise, the server creates a new random ID.
+   Otherwise, the server creates a new random ID. If a very strong match connects duplicate
+   clusters, the server keeps the oldest cluster ID and merges the newer clusters into it.
 
 ## Results
 
@@ -137,14 +138,25 @@ is damaged.
 For these reasons, PWS uses similarity matching and confidence scores instead of claiming to
 produce an exact hardware ID.
 
-## Development
+## Running locally
+
+Install the dependencies:
 
 ```bash
 npm ci
+```
+
+For a quick local run using JSON-file storage:
+
+```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+To compare browsers, run the probe once in each browser on the same computer. The Browser Profile
+IDs should be different, but the Device Cluster IDs should match when enough hardware signals are
+available.
 
 Useful commands:
 
@@ -160,7 +172,11 @@ The application requires a Node.js server. It cannot be deployed as a GitHub Pag
 
 ## Storage and deployment
 
-By default, the server stores device clusters in:
+PWS supports JSON-file and MySQL storage.
+
+### JSON storage
+
+JSON is the default when `PWS_STORAGE` is not set. The server stores clusters in:
 
 ```text
 .pws-data/device-clusters.json
@@ -169,10 +185,60 @@ By default, the server stores device clusters in:
 This file-based storage is intended for one self-hosted Node.js process with persistent disk
 storage. A serverless or multi-server production deployment needs a shared transactional database.
 
-Configuration:
+### MySQL 8 storage
 
+MySQL is recommended when more than one server instance needs to share device clusters.
+
+1. Make sure MySQL 8 is running.
+
+2. Copy the example settings:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+3. Update the MySQL host, user, and password in `.env.local`. Keep
+   `PWS_STORAGE=mysql`.
+
+4. Create the database and apply all pending migrations:
+
+   ```bash
+   npm run db:migrate
+   ```
+
+5. Start PWS:
+
+   ```bash
+   npm run dev
+   ```
+
+6. Open [http://localhost:3000](http://localhost:3000) and run the probe.
+
+After pulling code that contains new database migrations, stop the server, run
+`npm run db:migrate`, and start the server again.
+
+Next.js and the migration runner both read `.env.local`. Do not commit this file. Versioned SQL
+changes are stored in `db-migration/migrations`, and `db-migration/schema.sql` contains the current
+schema snapshot.
+
+The migration user needs permission to create the database and tables. The running application only
+needs `SELECT`, `INSERT`, `UPDATE`, and `DELETE` permissions.
+
+When one observation strongly matches multiple clusters, PWS keeps the oldest cluster ID, moves the
+observations into that cluster, and records the change in `device_cluster_merges`.
+
+### Storage configuration
+
+- `PWS_STORAGE`: `json` or `mysql`; defaults to `json`
 - `PWS_DATA_PATH`: location of the JSON data file
 - `PWS_MAX_DEVICE_CLUSTERS`: maximum number of stored clusters; default is `10000`
+- `PWS_MYSQL_HOST`: MySQL host; default is `127.0.0.1`
+- `PWS_MYSQL_PORT`: MySQL port; default is `3306`
+- `PWS_MYSQL_USER`: MySQL user; default is `root`
+- `PWS_MYSQL_PASSWORD`: MySQL password
+- `PWS_MYSQL_DATABASE`: database name; default is `pws`
+- `PWS_MYSQL_CONNECTION_LIMIT`: connection-pool size; default is `10`
+- `PWS_MYSQL_CANDIDATE_LIMIT`: recent observations considered per match; default is `5000`
 - `PWS_BASE_PATH`: URL path used to host the application; production default is `/pws`
 
 PWS does not use a third-party fingerprinting or matching library.
