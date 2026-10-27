@@ -107,7 +107,7 @@ function detectBackend(value: string): string {
 }
 
 function normalizeGpuModel(value: string, vendor: string): string {
-  return normalizeText(value)
+  const model = normalizeText(value)
     .replace(/^angle\s+/, '')
     .replace(/angle metal renderer/g, '')
     .replace(/direct3d\s*\d+.*/g, '')
@@ -119,6 +119,8 @@ function normalizeGpuModel(value: string, vendor: string): string {
     .replace(new RegExp(`\\b${vendor}\\b`, 'g'), '')
     .replace(/\s+/g, ' ')
     .trim();
+
+  return /^(gpu|graphics|graphics adapter|renderer|generic)$/.test(model) ? '' : model;
 }
 
 export function normalizeGpuDescriptor(

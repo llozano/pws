@@ -37,4 +37,11 @@ describe('observation normalization', () => {
     expect(normalizePlatform('MacIntel')).toBe('macos');
     expect(normalizePlatform('Win32')).toBe('windows');
   });
+
+  it('treats generic GPU labels as missing model information', () => {
+    expect(normalizeGpuDescriptor(webgl('Apple GPU', 'Apple Inc.'), null)).toMatchObject({
+      vendor: 'apple',
+      model: 'unknown',
+    });
+  });
 });
